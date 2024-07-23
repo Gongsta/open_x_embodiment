@@ -1,0 +1,8 @@
+# for mac with metal
+absl-py
+numpy
+jax==0.4.26
+jaxlib==0.4.26
+jax-metal # for mac
+flax
+tensorflow
