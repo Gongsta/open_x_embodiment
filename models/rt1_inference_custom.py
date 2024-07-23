@@ -1,5 +1,6 @@
 """Runs inference with a RT-1 model."""
 
+import time
 import copy
 
 from absl import app
@@ -10,9 +11,9 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import tensorflow as tf
+import tensorflow_hub as hub
 
 import rt1
-
 
 _CHECKPOINT_PATH = flags.DEFINE_string("checkpoint_path", None, "Path to checkpoint.")
 flags.mark_flag_as_required("checkpoint_path")
@@ -135,35 +136,27 @@ class RT1Policy:
         return action
 
 
-import time
+class USE:
+    # Universal Sentence Encoder language model, used to embed natural language instructions for RT-1-X
+    def __init__(self):
+        self.embedding = hub.load("https://tfhub.dev/google/universal-sentence-encoder-large/5")
 
-# embed the task string
-import tensorflow_hub as hub
+    def normalize_task_name(self, task_name):
+        replaced = (
+            task_name.replace("_", " ")
+            .replace("1f", " ")
+            .replace("4f", " ")
+            .replace("-", " ")
+            .replace("50", " ")
+            .replace("55", " ")
+            .replace("56", " ")
+        )
+        return replaced.lstrip(" ").rstrip(" ")
 
-# Load language model
-embed = hub.load("https://tfhub.dev/google/universal-sentence-encoder-large/5")
-instruction = "Move the red block to the left of the green block."
-
-
-def normalize_task_name(task_name):
-    replaced = (
-        task_name.replace("_", " ")
-        .replace("1f", " ")
-        .replace("4f", " ")
-        .replace("-", " ")
-        .replace("50", " ")
-        .replace("55", " ")
-        .replace("56", " ")
-    )
-    return replaced.lstrip(" ").rstrip(" ")
-
-
-natural_language_embedding_tf = embed([normalize_task_name(instruction)])[0]
-natural_language_embedding_jax = jnp.array(natural_language_embedding_tf.numpy())
-stacked_embeddings = jnp.stack([natural_language_embedding_jax] * 15, axis=0)
-
-assert stacked_embeddings.shape == (15, 512)
-
+    def embed(self, instruction):
+        natural_language_embedding_tf = self.embedding([self.normalize_task_name(instruction)])[0]
+        natural_language_embedding_jax = jnp.array(natural_language_embedding_tf.numpy())
+        return natural_language_embedding_jax
 
 def load_images(start=0):
     images = []
@@ -174,8 +167,6 @@ def load_images(start=0):
     images_jax = jnp.stack(images, axis=0)
     return images_jax
 
-
-images = load_images()
 
 
 def main(argv):
@@ -200,10 +191,12 @@ def main(argv):
         model=rt1x_model,
         seqlen=sequence_length,
     )
-
-    # Create a fake observation and run the policy.
+    USE_embedding = USE()
     curr = time.time()
+
     for i in range(10):
+        natural_language_embedding_jax = USE_embedding.embed("Pick up the red block")
+        stacked_embeddings = jnp.stack([natural_language_embedding_jax] * 15, axis=0)
         images = load_images(i)
         # This is a batched observation
         obs = {
